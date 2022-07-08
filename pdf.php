@@ -7,7 +7,8 @@ class PDF
 {
 
     private $format;
-    private $pageOrientation;
+    private $defaultPageOrientation;
+    private $curPageOrientation;
     private $unit = 'mm';
     private $html;
     private $pages;
@@ -36,6 +37,8 @@ class PDF
     private $topMargin;
     private $rightMargin;
     private $bottomMargin;
+    private $headerMargin;
+    private $footerMargin;
     private $coreFonts;          // массив стандартных шрифтов
     private $fonts;              // массив задействованных шрифтов
     private $FontFiles;          // массив файлов шрифтов
@@ -43,7 +46,12 @@ class PDF
     private $images;             // массив использованных изображений
     private $PageLinks;          // массив ссылок
     private $links;              // массив внутренних ссылок
-    public function __construct()
+
+    /**
+     * @param string|array $pageFormat
+     * @param string $pageOrientation
+     */
+    public function __construct($pageFormat, $pageOrientation)
     {
         // Устанавлиеваем разделитель целой и дробной частей
         // в соответствии к требуемым для PDF
@@ -268,6 +276,15 @@ class PDF
         $this->listtags = array('UL', 'OL', 'LI');
         $this->tabletags = array('TABLE', 'THEAD', 'TFOOT', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD');
         $this->formtags = array('TEXTAREA', 'INPUT', 'SELECT');
+
+        $this->topMargin = 16;
+        $this->bottomMargin = 16;
+        $this->leftMargin = 15;
+        $this->rightMargin = 15;
+        $this->headerMargin = 9;
+        $this->footerMargin = 9;
+        $this->setPageSize($pageFormat, $pageOrientation);
+        $this->defaultPageOrientation = $pageOrientation;
     }
 
     /**
@@ -318,7 +335,7 @@ class PDF
             $this->curPageWidthInPoints = $this->pageHeightInPoints;
             $this->curPageHeightInPoints = $this->pageWidthInPoints;
         }
-        $this->pageOrientation = $pageOrientation;
+        $this->curPageOrientation = $pageOrientation;
         $this->curPageWidthInInches = $this->curPageWidthInPoints / $this->scaleFactor;
         $this->curPageHeightInInches = $this->curPageHeightInPoints / $this->scaleFactor;
     }
@@ -549,7 +566,34 @@ class PDF
         return $format;
     }
 
-
+    private function resetMargins()
+    {
+        //ReSet left, top margins
+        if (($this->forcePortraitHeaders || $this->forcePortraitMargins) && $this->pageOrientation == 'P' && $this->CurOrientation == 'L') {
+            if (($this->mirrorMargins) && (($this->page) % 2 == 0)) {    // EVEN
+                $this->tMargin = $this->orig_rMargin;
+                $this->bMargin = $this->orig_lMargin;
+            } else {    // ODD	// OR NOT MIRRORING MARGINS/FOOTERS
+                $this->tMargin = $this->orig_lMargin;
+                $this->bMargin = $this->orig_rMargin;
+            }
+            $this->lMargin = $this->DeflMargin;
+            $this->rMargin = $this->DefrMargin;
+            $this->MarginCorrection = 0;
+            $this->PageBreakTrigger = $this->h - $this->bMargin;
+        } else  if (($this->mirrorMargins) && (($this->page) % 2 == 0)) {    // EVEN
+            $this->lMargin = $this->DefrMargin;
+            $this->rMargin = $this->DeflMargin;
+            $this->MarginCorrection = $this->DefrMargin - $this->DeflMargin;
+        } else {    // ODD	// OR NOT MIRRORING MARGINS/FOOTERS
+            $this->lMargin = $this->DeflMargin;
+            $this->rMargin = $this->DefrMargin;
+            if ($this->mirrorMargins) {
+                $this->MarginCorrection = $this->DeflMargin - $this->DefrMargin;
+            }
+        }
+        $this->x = $this->lMargin;
+    }
     /**
      * @param string $filePath
      */
