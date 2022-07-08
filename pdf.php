@@ -7,7 +7,7 @@ class PDF
 {
 
     private $format;
-    private $orientation;
+    private $pageOrientation;
     private $unit = 'mm';
     private $html;
     private $pages;
@@ -18,20 +18,20 @@ class PDF
     public const POINTS_UNIT = 72;
     public const MILIMETERS_PER_INCH = 25.4;
     private $allowedCSStags;
-    private $outerblocktags;
-    private $innerblocktags;
+    private $outerBlockTags;
+    private $innerBlocktags;
     private $inlinetags;
     private $listtags;
     private $tabletags;
     private $formtags;
     private $pageWidthInPoints;
     private $pageHeightInPoints;
-    private $pageWidthInUnits;
-    private $pageHeightInUnits;
+    private $pageWidthInInches;
+    private $pageHeightInInches;
     private $curPageWidthInPoints;
     private $curPageHeightInPoints;
-    private $curPageWidthInUnits;
-    private $curPageHeightInUnits;
+    private $curPageWidthInInches;
+    private $curPageHeightInInches;
     private $leftMargin;
     private $topMargin;
     private $rightMargin;
@@ -45,16 +45,23 @@ class PDF
     private $links;              // массив внутренних ссылок
     public function __construct()
     {
+        // Устанавлиеваем разделитель целой и дробной частей
+        // в соответствии к требуемым для PDF
         if (sprintf('%.1f', 1.0) != '1.0') {
             setlocale(LC_NUMERIC, 'C');
         }
-        // Standard A4 format
+        // Устанавлиеваем стандартный формат листа A4
         $this->format = 'A4';
-        // Portrait
+        // Устанавлиеваем ориентацию страницы Портрет
         $this->orientation = 'P';
+        // Инициализируем массив страниц
         $this->pages = [];
+        // Определяем масштаб - как количество типографских пунктов в дюйме
+        // Естественный масштаб - это 72 типографских пункта в одном дюйме
         $this->scaleFactor = self::POINTS_UNIT / self::MILIMETERS_PER_INCH;
+        // Разрешение изображения
         $this->dpi = 96;
+        // Стандартные стили для частей HTML документа
         $this->defaultCSS = array(
             'BODY' => array(
                 'FONT-FAMILY' => 'serif',
@@ -255,8 +262,8 @@ class PDF
         $this->allowedCSStags = 'DIV|P|H1|H2|H3|H4|H5|H6|FORM|IMG|A|BODY|TABLE|HR|THEAD|TFOOT|TBODY|TH|TR|TD|UL|OL|LI|PRE|BLOCKQUOTE|ADDRESS|DL|DT|DD';
         $this->allowedCSStags .= '|SPAN|TT|I|B|BIG|SMALL|EM|STRONG|DFN|CODE|SAMP|KBD|VAR|CITE|ABBR|ACRONYM|STRIKE|S|U|DEL|INS|Q|FONT';
         $this->allowedCSStags .= '|SELECT|INPUT|TEXTAREA';
-        $this->outerblocktags = array('DIV', 'FORM', 'CENTER', 'DL');
-        $this->innerblocktags = array('P', 'BLOCKQUOTE', 'ADDRESS', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'DT', 'DD');
+        $this->outerBlockTags = array('DIV', 'FORM', 'CENTER', 'DL');
+        $this->innerBlocktags = array('P', 'BLOCKQUOTE', 'ADDRESS', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'DT', 'DD');
         $this->inlinetags = array('SPAN', 'TT', 'I', 'B', 'BIG', 'SMALL', 'EM', 'STRONG', 'DFN', 'CODE', 'SAMP', 'KBD', 'VAR', 'CITE', 'ABBR', 'ACRONYM', 'STRIKE', 'S', 'U', 'DEL', 'INS', 'Q', 'FONT', 'TTS', 'TTZ', 'TTA');
         $this->listtags = array('UL', 'OL', 'LI');
         $this->tabletags = array('TABLE', 'THEAD', 'TFOOT', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD');
@@ -270,270 +277,274 @@ class PDF
     {
         $this->html = $html;
     }
-    private function setPageSize($format, &$orientation)
+    /**
+     * @param string|array $format
+     * @param string $pageOrientation
+     */
+    private function setPageSize($format, &$pageOrientation)
     {
         if (is_string($format)) {
             if ($format == '') {
                 $format = 'A4';
             }
-            $pfo = 'P';
-            if (preg_match('/([0-9a-zA-Z]*)-L/i', $format, $m)) {    // e.g. A4-L = A$ landscape
+            $preferedPageOrientation = 'P';
+            if (preg_match('/([0-9a-zA-Z]*)-L/i', $format, $m)) {    // например A4-L = A$ альбомная
                 $format = $m[1];
-                $pfo = 'L';
+                $preferedPageOrientation = 'L';
             }
-            $format = $this->getPageFormat($format);
-            if (!$format) {
-                throw new Exception('Неверный формат страницы: ' . $format);
-            } else {
-                $orientation = $pfo;
-            }
-
-            $this->pageWidthInPoints = $format[0];
-            $this->pageHeightInPoints = $format[1];
+            $pageDimensionsInPoints = $this->getPageDimensions($format);
+            $pageOrientation = $preferedPageOrientation;
+            // Устанавливаем размер страницы в соответствии с форматом
+            $this->pageWidthInPoints = $pageDimensionsInPoints[0];
+            $this->pageHeightInPoints = $pageDimensionsInPoints[1];
         } else {
-            if (!$format[0] || !$format[1]) {
-                throw new Exception('Неверный формат страницы: ' . $format[0] . ' ' . $format[1]);
+            $pageDimensionsInPoints = $format;
+            if (!$pageDimensionsInPoints[0] || !$pageDimensionsInPoints[1]) {
+                throw new Exception('Неверный формат страницы: ' . $pageDimensionsInPoints[0] . ' ' . $pageDimensionsInPoints[1]);
             }
-            $this->pageWidthInPoints = $format[0] * $this->scaleFactor;
-            $this->pageWidthInPoints = $format[1] * $this->scaleFactor;
+            $this->pageWidthInPoints = $pageDimensionsInPoints[0] * $this->scaleFactor;
+            $this->pageWidthInPoints = $pageDimensionsInPoints[1] * $this->scaleFactor;
         }
-        $this->fw = $this->pageWidthInPoints / $this->scaleFactor;
-        $this->fh = $this->pageHeightInPoints / $this->scaleFactor;
+        $this->pageWidthInInches = $this->pageWidthInPoints / $this->scaleFactor;
+        $this->pageHeightInInches = $this->pageHeightInPoints / $this->scaleFactor;
 
-        $orientation = strtolower($orientation);
-        if ($orientation == 'p' or $orientation == 'portrait') {
-            $orientation = 'P';
+        $pageOrientation = strtolower($pageOrientation);
+        if ($pageOrientation == 'p' or $pageOrientation == 'portrait') {
+            $pageOrientation = 'P';
             $this->curPageWidthInPoints = $this->pageWidthInPoints;
             $this->curPageHeightInPoints = $this->pageHeightInPoints;
-        } elseif ($orientation == 'l' or $orientation == 'landscape') {
-            $orientation = 'L';
+        } elseif ($pageOrientation == 'l' or $pageOrientation == 'landscape') {
+            $pageOrientation = 'L';
             $this->curPageWidthInPoints = $this->pageHeightInPoints;
             $this->curPageHeightInPoints = $this->pageWidthInPoints;
-        } else {
-            throw new Exception('Неверная ориентация страницы: ' . $orientation);
         }
-        $this->orientation = $orientation;
-
-        $this->curPageWidthInUnits = $this->curPageWidthInPoints / $this->scaleFactor;
-        $this->curPageHeightInUnits = $this->curPageHeightInPoints / $this->scaleFactor;
+        $this->pageOrientation = $pageOrientation;
+        $this->curPageWidthInInches = $this->curPageWidthInPoints / $this->scaleFactor;
+        $this->curPageHeightInInches = $this->curPageHeightInPoints / $this->scaleFactor;
     }
 
-    private function getPageFormat($format)
+    /**
+     * @return array
+     */
+    private function getPageDimensions($format)
     {
         switch (strtoupper($format)) {
             case '4A0': {
-                    $format = array(4767.87, 6740.79);
+                    $format = [4767.87, 6740.79];
                     break;
                 }
             case '2A0': {
-                    $format = array(3370.39, 4767.87);
+                    $format = [3370.39, 4767.87];
                     break;
                 }
             case 'A0': {
-                    $format = array(2383.94, 3370.39);
+                    $format = [2383.94, 3370.39];
                     break;
                 }
             case 'A1': {
-                    $format = array(1683.78, 2383.94);
+                    $format = [1683.78, 2383.94];
                     break;
                 }
             case 'A2': {
-                    $format = array(1190.55, 1683.78);
+                    $format = [1190.55, 1683.78];
                     break;
                 }
             case 'A3': {
-                    $format = array(841.89, 1190.55);
+                    $format = [841.89, 1190.55];
                     break;
                 }
-            case 'A4':
-            default: {
-                    $format = array(595.28, 841.89);
+            case 'A4': {
+                    $format = [595.28, 841.89];
                     break;
                 }
             case 'A5': {
-                    $format = array(419.53, 595.28);
+                    $format = [419.53, 595.28];
                     break;
                 }
             case 'A6': {
-                    $format = array(297.64, 419.53);
+                    $format = [297.64, 419.53];
                     break;
                 }
             case 'A7': {
-                    $format = array(209.76, 297.64);
+                    $format = [209.76, 297.64];
                     break;
                 }
             case 'A8': {
-                    $format = array(147.40, 209.76);
+                    $format = [147.40, 209.76];
                     break;
                 }
             case 'A9': {
-                    $format = array(104.88, 147.40);
+                    $format = [104.88, 147.40];
                     break;
                 }
             case 'A10': {
-                    $format = array(73.70, 104.88);
+                    $format = [73.70, 104.88];
                     break;
                 }
             case 'B0': {
-                    $format = array(2834.65, 4008.19);
+                    $format = [2834.65, 4008.19];
                     break;
                 }
             case 'B1': {
-                    $format = array(2004.09, 2834.65);
+                    $format = [2004.09, 2834.65];
                     break;
                 }
             case 'B2': {
-                    $format = array(1417.32, 2004.09);
+                    $format = [1417.32, 2004.09];
                     break;
                 }
             case 'B3': {
-                    $format = array(1000.63, 1417.32);
+                    $format = [1000.63, 1417.32];
                     break;
                 }
             case 'B4': {
-                    $format = array(708.66, 1000.63);
+                    $format = [708.66, 1000.63];
                     break;
                 }
             case 'B5': {
-                    $format = array(498.90, 708.66);
+                    $format = [498.90, 708.66];
                     break;
                 }
             case 'B6': {
-                    $format = array(354.33, 498.90);
+                    $format = [354.33, 498.90];
                     break;
                 }
             case 'B7': {
-                    $format = array(249.45, 354.33);
+                    $format = [249.45, 354.33];
                     break;
                 }
             case 'B8': {
-                    $format = array(175.75, 249.45);
+                    $format = [175.75, 249.45];
                     break;
                 }
             case 'B9': {
-                    $format = array(124.72, 175.75);
+                    $format = [124.72, 175.75];
                     break;
                 }
             case 'B10': {
-                    $format = array(87.87, 124.72);
+                    $format = [87.87, 124.72];
                     break;
                 }
             case 'C0': {
-                    $format = array(2599.37, 3676.54);
+                    $format = [2599.37, 3676.54];
                     break;
                 }
             case 'C1': {
-                    $format = array(1836.85, 2599.37);
+                    $format = [1836.85, 2599.37];
                     break;
                 }
             case 'C2': {
-                    $format = array(1298.27, 1836.85);
+                    $format = [1298.27, 1836.85];
                     break;
                 }
             case 'C3': {
-                    $format = array(918.43, 1298.27);
+                    $format = [918.43, 1298.27];
                     break;
                 }
             case 'C4': {
-                    $format = array(649.13, 918.43);
+                    $format = [649.13, 918.43];
                     break;
                 }
             case 'C5': {
-                    $format = array(459.21, 649.13);
+                    $format = [459.21, 649.13];
                     break;
                 }
             case 'C6': {
-                    $format = array(323.15, 459.21);
+                    $format = [323.15, 459.21];
                     break;
                 }
             case 'C7': {
-                    $format = array(229.61, 323.15);
+                    $format = [229.61, 323.15];
                     break;
                 }
             case 'C8': {
-                    $format = array(161.57, 229.61);
+                    $format = [161.57, 229.61];
                     break;
                 }
             case 'C9': {
-                    $format = array(113.39, 161.57);
+                    $format = [113.39, 161.57];
                     break;
                 }
             case 'C10': {
-                    $format = array(79.37, 113.39);
+                    $format = [79.37, 113.39];
                     break;
                 }
             case 'RA0': {
-                    $format = array(2437.80, 3458.27);
+                    $format = [2437.80, 3458.27];
                     break;
                 }
             case 'RA1': {
-                    $format = array(1729.13, 2437.80);
+                    $format = [1729.13, 2437.80];
                     break;
                 }
             case 'RA2': {
-                    $format = array(1218.90, 1729.13);
+                    $format = [1218.90, 1729.13];
                     break;
                 }
             case 'RA3': {
-                    $format = array(864.57, 1218.90);
+                    $format = [864.57, 1218.90];
                     break;
                 }
             case 'RA4': {
-                    $format = array(609.45, 864.57);
+                    $format = [609.45, 864.57];
                     break;
                 }
             case 'SRA0': {
-                    $format = array(2551.18, 3628.35);
+                    $format = [2551.18, 3628.35];
                     break;
                 }
             case 'SRA1': {
-                    $format = array(1814.17, 2551.18);
+                    $format = [1814.17, 2551.18];
                     break;
                 }
             case 'SRA2': {
-                    $format = array(1275.59, 1814.17);
+                    $format = [1275.59, 1814.17];
                     break;
                 }
             case 'SRA3': {
-                    $format = array(907.09, 1275.59);
+                    $format = [907.09, 1275.59];
                     break;
                 }
             case 'SRA4': {
-                    $format = array(637.80, 907.09);
+                    $format = [637.80, 907.09];
                     break;
                 }
             case 'LETTER': {
-                    $format = array(612.00, 792.00);
+                    $format = [612.00, 792.00];
                     break;
                 }
             case 'LEGAL': {
-                    $format = array(612.00, 1008.00);
+                    $format = [612.00, 1008.00];
                     break;
                 }
             case 'EXECUTIVE': {
-                    $format = array(521.86, 756.00);
+                    $format = [521.86, 756.00];
                     break;
                 }
             case 'FOLIO': {
-                    $format = array(612.00, 936.00);
+                    $format = [612.00, 936.00];
                     break;
                 }
             case 'B': {
-                    $format = array(362.83, 561.26);
+                    $format = [362.83, 561.26];
                     break;
                 }        //	'B' format paperback size 128x198mm
             case 'A': {
-                    $format = array(314.65, 504.57);
+                    $format = [314.65, 504.57];
                     break;
                 }        //	'A' format paperback size 111x178mm
             case 'DEMY': {
-                    $format = array(382.68, 612.28);
+                    $format = [382.68, 612.28];
                     break;
                 }        //	'Demy' format paperback size 135x216mm
             case 'ROYAL': {
-                    $format = array(433.70, 663.30);
+                    $format = [433.70, 663.30];
                     break;
                 }    //	'Royal' format paperback size 153x234mm
+            default: {
+                    $format = [595.28, 841.89];
+                    break;
+                }
         }
         return $format;
     }
