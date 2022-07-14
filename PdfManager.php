@@ -3,7 +3,7 @@
 /**
  * Класс создания PDF файла
  */
-class PDF
+class PdfManager
 {
     public const POINTS_UNIT = 72;
     public const MILIMETERS_PER_INCH = 25.4;
@@ -320,8 +320,8 @@ class PDF
         $this->setCompression(true);
         // Установка настроек экрана по умолчанию
         $this->setDisplayPreferences();
-        // Данные шрифтов
-        require('config_fonts.php');
+        // Настройки шрифтов
+        require(__DIR__ . DIRECTORY_SEPARATOR . 'config/fonts.php');
         // Доступные шрифты UNICODE
         $this->availableUnicodeFonts = array();
         foreach ($this->fontData as $f => $fs) {
