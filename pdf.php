@@ -5,26 +5,27 @@
  */
 class PDF
 {
-
+    public const POINTS_UNIT = 72;
+    public const MILIMETERS_PER_INCH = 25.4;
+    public const LINE_WIDTH_COEFF = 0.567;
     private $format;
     private $defaultPageOrientation;
     private $curPageOrientation;
     private $unit = 'mm';
     private $html;
     private $pages;
+    private $curPage;
     private $scaleFactor;
     private $dpi;
     private $pdfVersion;
     private $defaultCSS;
-    public const POINTS_UNIT = 72;
-    public const MILIMETERS_PER_INCH = 25.4;
     private $allowedCSStags;
     private $outerBlockTags;
     private $innerBlocktags;
-    private $inlinetags;
-    private $listtags;
-    private $tabletags;
-    private $formtags;
+    private $inlineTags;
+    private $listTags;
+    private $tableTags;
+    private $formTags;
     private $pageWidthInPoints;
     private $pageHeightInPoints;
     private $pageWidthInInches;
@@ -37,15 +38,34 @@ class PDF
     private $topMargin;
     private $rightMargin;
     private $bottomMargin;
+    private $defaultLeftMrgin;
+    private $defaultRightMargin;
     private $headerMargin;
     private $footerMargin;
-    private $coreFonts;          // массив стандартных шрифтов
-    private $fonts;              // массив задействованных шрифтов
-    private $FontFiles;          // массив файлов шрифтов
     private $diffs;              // массив различий в кодировке
     private $images;             // массив использованных изображений
-    private $PageLinks;          // массив ссылок
+    private $pageLinks;          // массив ссылок
     private $links;              // массив внутренних ссылок
+    private $pageWidthWithoutMargins;
+    private $autoPageBreak;
+    private $pageBreakMargin;
+    private $pageBreakTrigger;
+    private $x;
+    private $y;
+    private $lineWidth;
+    private $coreFonts;          // массив стандартных шрифтов
+    private $fonts;              // массив задействованных шрифтов
+    private $fontFiles;          // массив файлов шрифтов
+    private $defaultAvailableFonts;
+    private $availableUnicodeFonts;
+    private $fontData;
+    private $enabledTags;
+    private $zoomMode;
+    private $layoutMode;
+    private $compressionMode;
+    private $mbEncoding;
+    private $displayPreferences;
+
 
     /**
      * @param string|array $pageFormat
@@ -281,10 +301,102 @@ class PDF
         $this->bottomMargin = 16;
         $this->leftMargin = 15;
         $this->rightMargin = 15;
+        $this->defaultLeftMargin = 15;
+        $this->defaultRightMargin = 15;
         $this->headerMargin = 9;
         $this->footerMargin = 9;
+        $this->pageBreakMargin = 16;
         $this->setPageSize($pageFormat, $pageOrientation);
-        $this->defaultPageOrientation = $pageOrientation;
+        $this->leftMargin = $this->defaultLeftMargin;
+        $this->rightMargin = $this->defaultRightMargin;
+        $this->pageBreakTrigger = $this->pageHeightInInches - $this->bottomMargin;
+        $this->pageWidthWithoutMargins = $this->curPageWidthInInches - $this->leftMargin - $this->rightMargin;
+        $this->lineWidth = self::LINE_WIDTH_COEFF / $this->scaleFactor;
+        // Активируем все тэги по умолчанию
+        $this->disableTags();
+        // Режим отображения в полную ширину
+        $this->setDisplayMode(100);    // fullwidth?		'fullpage'
+        // Сжатие
+        $this->setCompression(true);
+        // Установка настроек экрана по умолчанию
+        $this->setDisplayPreferences();
+        // Данные шрифтов
+        require('config_fonts.php');
+        // Доступные шрифты UNICODE
+        $this->availableUnicodeFonts = array();
+        foreach ($this->fontData as $f => $fs) {
+            if (isset($fs['R']) && $fs['R']) {
+                $this->availableUnicodeFonts[] = $f;
+            }
+            if (isset($fs['B']) && $fs['B']) {
+                $this->availableUnicodeFonts[] = $f . 'B';
+            }
+            if (isset($fs['I']) && $fs['I']) {
+                $this->availableUnicodeFonts[] = $f . 'I';
+            }
+            if (isset($fs['BI']) && $fs['BI']) {
+                $this->availableUnicodeFonts[] = $f . 'BI';
+            }
+        }
+        $this->defaultAvailableFonts = $this->availableUnicodeFonts;
+
+        $optcore = false;
+        $onlyCoreFonts = false;
+        if (preg_match('/([\-+])aCJK/i', $mode, $m)) {
+            preg_replace('/([\-+])aCJK/i', '', $mode);
+            if ($m[1] == '+') {
+                $this->useAdobeCJK = true;
+            } else {
+                $this->useAdobeCJK = false;
+            }
+        }
+
+        if (strlen($mode) == 1) {
+            if ($mode == 's') {
+                $this->percentSubset = 100;
+                $mode = '';
+            } else if ($mode == 'c') {
+                $onlyCoreFonts = true;
+                $mode = '';
+            }
+        } else if (substr($mode, -2) == '-s') {
+            $this->percentSubset = 100;
+            $mode = substr($mode, 0, strlen($mode) - 2);
+        } else if (substr($mode, -2) == '-c') {
+            $onlyCoreFonts = true;
+            $mode = substr($mode, 0, strlen($mode) - 2);
+        } else if (substr($mode, -2) == '-x') {
+            $optcore = true;
+            $mode = substr($mode, 0, strlen($mode) - 2);
+        }
+
+        // Autodetect if mode is a language_country string (en-GB or en_GB or en)
+        if ((strlen($mode) == 5 && $mode != 'UTF-8') || strlen($mode) == 2) {
+            list($coreSuitable, $mpdf_pdf_unifonts) = $this->getLangOptions($mode, $this->useAdobeCJK);
+            if ($coreSuitable && $optcore) {
+                $onlyCoreFonts = true;
+            }
+            if ($mpdf_pdf_unifonts) {
+                $this->restrictUnicodeFonts($mpdf_pdf_unifonts);
+                $this->defaultAvailableFonts = $mpdf_pdf_unifonts;
+            }
+            $this->currentLang = $mode;
+            $this->default_lang = $mode;
+        }
+        $this->onlyCoreFonts =  $onlyCoreFonts;
+
+        if ($this->onlyCoreFonts) {
+            $this->setMBEncoding('windows-1252');    // sets $this->mbEncoding
+        } else {
+            $this->setMBEncoding('UTF-8');    // sets $this->mbEncoding
+        }
+        @mb_regex_encoding('UTF-8');
+        $this->coreFonts = [
+            'ccourier' => 'Courier', 'ccourierB' => 'Courier-Bold', 'ccourierI' => 'Courier-Oblique', 'ccourierBI' => 'Courier-BoldOblique',
+            'chelvetica' => 'Helvetica', 'chelveticaB' => 'Helvetica-Bold', 'chelveticaI' => 'Helvetica-Oblique', 'chelveticaBI' => 'Helvetica-BoldOblique',
+            'ctimes' => 'Times-Roman', 'ctimesB' => 'Times-Bold', 'ctimesI' => 'Times-Italic', 'ctimesBI' => 'Times-BoldItalic',
+            'csymbol' => 'Symbol', 'czapfdingbats' => 'ZapfDingbats'
+        ];
     }
 
     /**
@@ -298,7 +410,7 @@ class PDF
      * @param string|array $format
      * @param string $pageOrientation
      */
-    private function setPageSize($format, &$pageOrientation)
+    private function setPageSize($format, $pageOrientation)
     {
         if (is_string($format)) {
             if ($format == '') {
@@ -336,10 +448,32 @@ class PDF
             $this->curPageHeightInPoints = $this->pageWidthInPoints;
         }
         $this->curPageOrientation = $pageOrientation;
+        $this->defaultPageOrientation = $pageOrientation;
         $this->curPageWidthInInches = $this->curPageWidthInPoints / $this->scaleFactor;
         $this->curPageHeightInInches = $this->curPageHeightInPoints / $this->scaleFactor;
     }
-
+    /**
+     * @param string $leftMargin
+     * @param string $rightMargin
+     * @param string $topMargin
+     */
+    private function setMargins($leftMargin, $rightMargin, $topMargin)
+    {
+        $this->leftMargin = $leftMargin;
+        $this->rightMargin = $rightMargin;
+        $this->topMargin = $topMargin;
+    }
+    /**
+     * Установка автоматического разрыва страниц
+     * @param string $autoMode
+     * @param float $margin
+     */
+    private function setAutoPageBreak($autoMode, $margin)
+    {
+        $this->autoPageBreak = $autoMode;
+        $this->bottomMargin = $margin;
+        $this->pageBreakTrigger = $this->pageHeightInInches - $margin;
+    }
     /**
      * @return array
      */
@@ -570,7 +704,7 @@ class PDF
     {
         //ReSet left, top margins
         if (($this->forcePortraitHeaders || $this->forcePortraitMargins) && $this->pageOrientation == 'P' && $this->CurOrientation == 'L') {
-            if (($this->mirrorMargins) && (($this->page) % 2 == 0)) {    // EVEN
+            if (($this->mirrorMargins) && (($this->curPage) % 2 == 0)) {    // EVEN
                 $this->tMargin = $this->orig_rMargin;
                 $this->bMargin = $this->orig_lMargin;
             } else {    // ODD	// OR NOT MIRRORING MARGINS/FOOTERS
@@ -581,7 +715,7 @@ class PDF
             $this->rMargin = $this->DefrMargin;
             $this->MarginCorrection = 0;
             $this->PageBreakTrigger = $this->h - $this->bMargin;
-        } else  if (($this->mirrorMargins) && (($this->page) % 2 == 0)) {    // EVEN
+        } else  if (($this->mirrorMargins) && (($this->curPage) % 2 == 0)) {    // EVEN
             $this->lMargin = $this->DefrMargin;
             $this->rMargin = $this->DeflMargin;
             $this->MarginCorrection = $this->DefrMargin - $this->DeflMargin;
@@ -593,6 +727,134 @@ class PDF
             }
         }
         $this->x = $this->lMargin;
+    }
+
+    function setLeftMargin($margin)
+    {
+
+        $this->leftMargin = $margin;
+        if ($this->curPage > 0 and $this->x < $margin) {
+            $this->x = $margin;
+        }
+    }
+
+    function setTopMargin($margin)
+    {
+
+        $this->topMargin = $margin;
+    }
+
+    function setRightMargin($margin)
+    {
+
+        $this->rightMargin = $margin;
+    }
+    function setBottomMargin($margin)
+    {
+
+        $this->bottomMargin = $margin;
+    }
+
+    /**
+     * @param string|null $str
+     */
+    private function disableTags($str = null)
+    {
+        if (is_null($str)) {
+            // Добавляйте новые тэги в строке ниже
+            ///////////////////////////////////////////////////////
+            // Добавлен новый пользовательский тэг indexentry
+            $this->enabledTags = "<span><s><strike><del><bdo><big><small><ins><cite><acronym><font><sup><sub><b><u><i><a><strong><em><code><samp><tt><kbd><var><q><table><thead><tfoot><tbody><tr><th><td><ol><ul><li><dl><dt><dd><form><input><select><textarea><option><div><p><h1><h2><h3><h4><h5><h6><pre><center><blockquote><address><hr><img><br><indexentry><indexinsert><bookmark><watermarktext><watermarkimage><tts><ttz><tta><column_break><columnbreak><newcolumn><newpage><page_break><pagebreak><formfeed><columns><toc><tocentry><tocpagebreak><pageheader><pagefooter><setpageheader><setpagefooter><sethtmlpageheader><sethtmlpagefooter><annotation><template><jpgraph><barcode><dottab>";
+        } else {
+            $str = explode(",", $str);
+            foreach ($str as $v) {
+                $this->enabledTags = str_replace(trim($v), '', $this->enabledTags);
+            }
+        }
+    }
+    /**
+     * Уставнока режима отображения
+     * @param string $zoom
+     * @param string $layout
+     */
+    private function setDisplayMode($zoom, $layout = 'continuous')
+    {
+        // Установка режима экрана в просмотрщике
+        if ($zoom == 'fullpage' || $zoom == 'fullwidth' || $zoom == 'real' || $zoom == 'default' || !is_string($zoom)) {
+            $this->zoomMode = $zoom;
+        } else {
+            throw new Exception('Некорректный масштаб режима отображения: ' . $zoom);
+        }
+
+        if ($layout == 'single' || $layout == 'continuous' || $layout == 'two' || $layout == 'twoleft' || $layout == 'tworight' || $layout == 'default') {
+            $this->layoutMode = $layout;
+        } else {
+            throw new Exception('Некорректный формат режима отображения: ' . $layout);
+        }
+    }
+    /** 
+     * Установка кодировки страниц
+     * @param string $compress
+     */
+    private function setCompression($compress)
+    {
+        if (function_exists('gzcompress')) {
+            $this->compressionMode = $compress;
+        } else {
+            $this->compressionMode = null;
+        }
+    }
+    /**
+     * Установка настроек отображения
+     * @param string|null $preferences Строка, сотоящая из следующих подстрок:
+     *  /HideMenubar/HideToolbar/HideWindowUI/DisplayDocTitle/CenterWindow/FitWindow
+     */
+    private function setDisplayPreferences($preferences = null)
+    {
+        if (!is_null($preferences)) {
+            $this->displayPreferences .= $preferences;
+        }
+    }
+    /**
+     * Установка запрета на использование шрифтов с поддержкой UNICODE
+     * @param array $unicodeFonts - массив шрифтов, которые необходимо запретить 
+     */
+    private function restrictUnicodeFonts($unicodeFonts)
+    {
+        if (count($unicodeFonts)) {
+            $this->availableUnicodeFonts = $unicodeFonts;
+        } else {
+            $this->availableUnicodeFonts = $this->defaultAvailableFonts;
+        }
+        if (count($this->availableUnicodeFonts) == 0) {
+            $this->availableUnicodeFonts[] = $this->defaultAvailableFonts[0];
+        }
+        $this->availableUnicodeFonts = array_values($this->availableUnicodeFonts);
+    }
+    /**
+     * Установка многобайтовой кодировки
+     * @param string $encoding - имя кодировки 
+     */
+    private function setMBEncoding($encoding)
+    {
+        @mb_regex_encoding('UTF-8');
+        $currMBEncoding = $this->mbEncoding;
+        $this->mbEncoding = $encoding;
+        if (!$this->mbEncoding || $currMBEncoding != $this->mbEncoding) {
+            mb_internal_encoding($this->mbEncoding);
+            if ($encoding == 'UTF-8') {
+                @mb_regex_encoding('UTF-8');
+            }
+        }
+    }
+    /**
+     * @param string $mode
+     * @param string $font
+     * @return array
+     */
+    private function getLangOptions($mode, $font)
+    {
+        return [];
     }
     /**
      * @param string $filePath
